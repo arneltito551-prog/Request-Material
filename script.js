@@ -1,4 +1,4 @@
-// script.js (module) - Firestore-backed dashboard (cleaned & deduplicated)
+// script.js (module) - Cleaned & de-duplicated Firestore-backed dashboard
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
 import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-analytics.js";
 import {
@@ -17,7 +17,7 @@ const firebaseConfig = {
   measurementId: "G-F4FR8YJD99"
 };
 const app = initializeApp(firebaseConfig);
-try { getAnalytics(app); } catch (e) { /* ignore analytics errors (e.g., not available in this environment) */ }
+try { getAnalytics(app); } catch (e) { /* ignore analytics errors */ }
 const db = getFirestore(app);
 
 // cloudinary placeholders (ready if you plan to use)
@@ -112,23 +112,37 @@ const printHistoryBtn = document.getElementById("printHistoryBtn");
 let editingDeliveredId = null;
 let editingUsageId = null;
 
-// local cached requests for selects / quick lookup
-let latestRequestsArray = [];
-
-// helpers - modal show/hide
+// ---------- small UI helpers ----------
 function openModal(el){
+  if(!el) return;
   el.classList.add("fullscreen");
   el.style.display = "flex";
   el.setAttribute("aria-hidden","false");
   document.body.style.overflow = "hidden";
 }
 function closeModal(el){
+  if(!el) return;
   el.style.display = "none";
   el.classList.remove("fullscreen");
   el.setAttribute("aria-hidden","true");
   document.body.style.overflow = "";
 }
-function showToast(msg){ if(!toastEl) return; toastEl.textContent = msg; toastEl.className = "show"; setTimeout(()=> toastEl.className = "", 3000); }
+function showToast(msg){ 
+  if(!toastEl) {
+    // fallback: SweetAlert2 toast
+    try{ Swal.fire({ toast:true, position:'top-end', icon:'info', title: msg, showConfirmButton:false, timer:2000 }); } catch(e){}
+    return;
+  }
+  toastEl.textContent = msg; 
+  toastEl.className = "show"; 
+  setTimeout(()=> toastEl.className = "", 3000); 
+}
+function showAlertSuccess(title = "Success", text = "") {
+  try{ Swal.fire({ icon: "success", title, text }); } catch(e){ showToast(`${title} ${text}`); }
+}
+function showAlertError(title = "Error", text = "") {
+  try{ Swal.fire({ icon: "error", title, text }); } catch(e){ showToast(`${title} ${text}`); }
+}
 function fmtDate(ts){ try{ return ts?.toDate ? ts.toDate().toLocaleString() : new Date(ts).toLocaleString(); } catch(e){ return ""; } }
 function escapeHtml(s){ if(!s) return ""; return s.toString().replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;"); }
 function normKey(s){ return (s||"").toString().toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,""); }
@@ -143,14 +157,27 @@ function remainingForUsage(req) {
   return Number(req.qty ?? 0);
 }
 
+// ---------- Modal button centering helper (add .modal-footer or .modal-actions in HTML) ----------
+(function centerModalActions(){
+  // if you place modal bottom buttons in container with class 'modal-footer' or 'modal-actions', this will center them
+  const footers = document.querySelectorAll(".modal-footer, .modal-actions");
+  footers.forEach(f => {
+    f.style.display = "flex";
+    f.style.justifyContent = "center";
+    f.style.gap = "8px";
+    f.style.flexWrap = "wrap";
+    f.style.padding = "12px";
+  });
+})();
+
 // ---------- Submit Request ----------
-submitRequestBtn.addEventListener("click", ()=>{
+submitRequestBtn?.addEventListener("click", ()=>{
   dateEl.value = new Date().toLocaleString();
   openModal(submitModal);
 });
-exitModalBtn.addEventListener("click", ()=> closeModal(submitModal));
+exitModalBtn?.addEventListener("click", ()=> closeModal(submitModal));
 
-submitDataBtn.addEventListener("click", async ()=>{
+submitDataBtn?.addEventListener("click", async ()=>{
   const personnel = personnelEl.value.trim();
   const particular = particularEl.value.trim();
   const unit = unitEl.value.trim();
@@ -165,14 +192,15 @@ submitDataBtn.addEventListener("click", async ()=>{
       usageFulfilled: false,
       createdAt: serverTimestamp()
     });
-    showToast("✅ Request submitted");
+    showAlertSuccess("Request submitted");
     personnelEl.value = ""; particularEl.value = ""; unitEl.value = ""; qtyEl.value = "";
     closeModal(submitModal);
-  } catch(e){ console.error(e); showToast("⚠️ Submit failed"); }
+  } catch(e){ console.error(e); showAlertError("Submit failed", e.message || ""); }
 });
 
 // ---------- Requests live listener ----------
 const requestsQ = query(requestsCol, orderBy("createdAt","desc"));
+let latestRequestsArray = []; // keep a local snapshot for quick filtering / selects
 
 onSnapshot(requestsQ, snapshot=>{
   requestsTbody.innerHTML = "";
@@ -216,11 +244,21 @@ onSnapshot(requestsQ, snapshot=>{
   requestsTbody.querySelectorAll("button[data-action='delete']").forEach(btn=>{
     btn.onclick = async () => {
       const id = btn.dataset.id;
+      try{
+        const confirmed = await Swal.fire({
+          title: 'Delete request?',
+          text: "This will delete the request and all related Delivered & Usage records.",
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonText: 'Yes, delete',
+        });
+        if(!confirmed.isConfirmed) return;
+      } catch(e){}
       if(!confirm("Delete this request and all related Delivered & Usage records?")) return;
       try{
         await cascadeDeleteRequest(id);
-        showToast("✅ Request and related records deleted");
-      } catch(err){ console.error(err); showToast("⚠️ Delete failed"); }
+        showAlertSuccess("Request deleted");
+      } catch(err){ console.error(err); showAlertError("Delete failed", err.message || ""); }
     };
   });
 
@@ -230,25 +268,25 @@ onSnapshot(requestsQ, snapshot=>{
 });
 
 // open/close request modal
-viewRequestBtn.addEventListener("click", ()=> openModal(viewRequestModal));
-closeRequestsBtn.addEventListener("click", ()=> closeModal(viewRequestModal));
-closeRequestsBtnTop.addEventListener("click", ()=> closeModal(viewRequestModal));
+viewRequestBtn?.addEventListener("click", ()=> openModal(viewRequestModal));
+closeRequestsBtn?.addEventListener("click", ()=> closeModal(viewRequestModal));
+closeRequestsBtnTop?.addEventListener("click", ()=> closeModal(viewRequestModal));
 
 // search requests (filter table rows)
-searchRequests.addEventListener("input", ()=> filterTableRows(requestsTbody, searchRequests.value));
+searchRequests?.addEventListener("input", ()=> filterTableRows(requestsTbody, searchRequests.value));
 
 // print requests
-printRequestsBtn.addEventListener("click", ()=> printTable("Requests", document.getElementById("requestsTable")));
+printRequestsBtn?.addEventListener("click", ()=> printTable("Requests", document.getElementById("requestsTable")));
 
 // open add delivered/usage from requests
-openAddDeliveredFromRequestsBtn.addEventListener("click", ()=> {
+openAddDeliveredFromRequestsBtn?.addEventListener("click", ()=> {
   editingDeliveredId = null;
   editDeliveredTitle.textContent = "Add Delivered (select request)";
   editDeliveredParticular.value = ""; editDeliveredUnit.value = ""; editDeliveredQty.value = 1;
   deliveredRequestSelect.value = "";
   openModal(editDeliveredModal);
 });
-openAddUsageFromRequestsBtn.addEventListener("click", ()=> {
+openAddUsageFromRequestsBtn?.addEventListener("click", ()=> {
   editingUsageId = null;
   editUsageTitle.textContent = "Add Usage (select request)";
   editUsageParticular.value = ""; editUsageUnit.value = ""; editUsageQty.value = 1; editUsageRemarks.value = "";
@@ -256,7 +294,7 @@ openAddUsageFromRequestsBtn.addEventListener("click", ()=> {
   openModal(editUsageModal);
 });
 
-// cascade delete (request + related delivered + usage)
+// cascade delete
 async function cascadeDeleteRequest(requestId){
   const batch = writeBatch(db);
   const reqRef = doc(db, "requests", requestId);
@@ -271,19 +309,19 @@ async function cascadeDeleteRequest(requestId){
 }
 
 // ---------- Delivered add/edit/toggle ----------
-viewDeliveredBtn.addEventListener("click", ()=> openModal(deliveredModal));
-closeDeliveredBtn.addEventListener("click", ()=> closeModal(deliveredModal));
-closeDeliveredBtnTop.addEventListener("click", ()=> closeModal(deliveredModal));
-addDeliveredBtn.addEventListener("click", ()=>{
+viewDeliveredBtn?.addEventListener("click", ()=> openModal(deliveredModal));
+closeDeliveredBtn?.addEventListener("click", ()=> closeModal(deliveredModal));
+closeDeliveredBtnTop?.addEventListener("click", ()=> closeModal(deliveredModal));
+addDeliveredBtn?.addEventListener("click", ()=>{
   editingDeliveredId = null;
   editDeliveredTitle.textContent = "Add Delivered";
   deliveredRequestSelect.value = "";
   editDeliveredParticular.value = ""; editDeliveredUnit.value = ""; editDeliveredQty.value = 1;
   openModal(editDeliveredModal);
 });
-cancelEditDeliveredBtn.addEventListener("click", ()=> closeModal(editDeliveredModal));
+cancelEditDeliveredBtn?.addEventListener("click", ()=> closeModal(editDeliveredModal));
 
-saveDeliveredBtn.addEventListener("click", async ()=>{
+saveDeliveredBtn?.addEventListener("click", async ()=>{
   const particular = editDeliveredParticular.value.trim();
   const unit = editDeliveredUnit.value.trim();
   const qty = Number(editDeliveredQty.value);
@@ -292,18 +330,21 @@ saveDeliveredBtn.addEventListener("click", async ()=>{
   try{
     if(editingDeliveredId){
       await updateDoc(doc(db, "delivered", editingDeliveredId), { particular, unit, qty, updatedAt: serverTimestamp() });
-      showToast("✅ Delivered updated");
+      showAlertSuccess("Delivered updated");
     } else {
       await addDoc(deliveredCol, {
-        particular, unit, qty, status: "pending", deliveredAt: serverTimestamp(), fromRequestId: linkedRequestId ?? null
+        particular, unit, qty,
+        status: "pending",
+        deliveredAt: serverTimestamp(),
+        fromRequestId: linkedRequestId ?? null
       });
-      showToast("✅ Delivered added");
+      showAlertSuccess("Delivered added");
       if(linkedRequestId){
         await decrementDeliveredRemaining(linkedRequestId, qty);
       }
     }
     closeModal(editDeliveredModal);
-  } catch(e){ console.error(e); showToast("⚠️ Save failed"); }
+  } catch(e){ console.error(e); showAlertError("Save failed", e.message || ""); }
 });
 
 // delivered live listener
@@ -342,7 +383,7 @@ onSnapshot(deliveredQ, snapshot=>{
           const next = (current === "completed") ? "pending" : "completed";
           await updateDoc(ref, { status: next, updatedAt: serverTimestamp() });
           showToast(`Status set to ${next}`);
-        } catch(e){ console.error(e); showToast("⚠️ Toggle failed"); }
+        } catch(e){ console.error(e); showAlertError("Toggle failed", e.message || ""); }
       } else if(action === "edit"){
         try{
           const ref = doc(db, "delivered", id);
@@ -356,7 +397,7 @@ onSnapshot(deliveredQ, snapshot=>{
           editDeliveredUnit.value = data.unit || "";
           editDeliveredQty.value = data.qty || 1;
           openModal(editDeliveredModal);
-        } catch(e){ console.error(e); showToast("⚠️ Fetch failed"); }
+        } catch(e){ console.error(e); showAlertError("Fetch failed", e.message || ""); }
       }
     };
   });
@@ -370,7 +411,7 @@ async function decrementDeliveredRemaining(requestId, delta){
     if(!snap.exists()) return;
     const data = snap.data();
     const cur = Number(data.remainingForDelivered ?? data.qty ?? 0);
-    const newRem = Math.max(cur - Number(delta || 0), 0);
+    const newRem = cur - Number(delta || 0);
     if(newRem <= 0){
       await updateDoc(reqRef, { remainingForDelivered: 0, deliveredFulfilled: true, updatedAt: serverTimestamp() });
       showToast("✅ Request fulfilled for Delivered (removed from Delivered select)");
@@ -381,21 +422,21 @@ async function decrementDeliveredRemaining(requestId, delta){
   } catch(err){ console.error("decrementDeliveredRemaining error:", err); }
 }
 
-// ---------- Usage add/edit (single listener, not re-attached on each open) ----------
-viewUsageBtn.addEventListener("click", ()=> { openModal(usageModal); });
-closeUsageBtn.addEventListener("click", ()=> closeModal(usageModal));
-closeUsageBtnTop.addEventListener("click", ()=> closeModal(usageModal));
+// ---------- Usage add/edit ----------
+viewUsageBtn?.addEventListener("click", ()=> { renderUsage(); openModal(usageModal); });
+closeUsageBtn?.addEventListener("click", ()=> closeModal(usageModal));
+closeUsageBtnTop?.addEventListener("click", ()=> closeModal(usageModal));
 
-addUsageBtn.addEventListener("click", ()=>{
+addUsageBtn?.addEventListener("click", ()=>{
   editingUsageId = null;
   editUsageTitle.textContent = "Add Usage";
   usageRequestSelect.value = "";
   editUsageParticular.value = ""; editUsageUnit.value = ""; editUsageQty.value = 1; editUsageRemarks.value = "";
   openModal(editUsageModal);
 });
-cancelEditUsageBtn.addEventListener("click", ()=> closeModal(editUsageModal));
+cancelEditUsageBtn?.addEventListener("click", ()=> closeModal(editUsageModal));
 
-saveUsageBtn.addEventListener("click", async ()=>{
+saveUsageBtn?.addEventListener("click", async ()=>{
   const particular = editUsageParticular.value.trim();
   const unit = editUsageUnit.value.trim();
   const qty = Number(editUsageQty.value);
@@ -405,51 +446,53 @@ saveUsageBtn.addEventListener("click", async ()=>{
   try{
     if(editingUsageId){
       await updateDoc(doc(db, "usage", editingUsageId), { particular, unit, qty, remarks, updatedAt: serverTimestamp() });
-      showToast("✅ Usage updated");
+      showAlertSuccess("Usage updated");
     } else {
       await addDoc(usageCol, { particular, unit, qty, remarks, usedAt: serverTimestamp(), fromRequestId: linkedRequestId ?? null });
-      showToast("✅ Usage added");
+      showAlertSuccess("Usage added");
       if(linkedRequestId){
         await decrementUsageRemaining(linkedRequestId, qty);
       }
     }
     closeModal(editUsageModal);
-  } catch(e){ console.error(e); showToast("⚠️ Save failed"); }
+  } catch(e){ console.error(e); showAlertError("Save failed", e.message || ""); }
 });
 
-// usage live listener (one-time)
-const usageQ = query(usageCol, orderBy("usedAt","desc"));
-onSnapshot(usageQ, snapshot=>{
-  usageTbody.innerHTML = "";
-  snapshot.forEach(docSnap=>{
-    const d = docSnap.data(); const id = docSnap.id;
-    const date = fmtDate(d.usedAt);
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td style="text-align:left;padding-left:10px">${escapeHtml(d.particular)}</td>
-      <td>${escapeHtml(d.unit)}</td><td>${d.qty}</td><td>${date}</td><td>${escapeHtml(d.remarks || "")}</td>
-      <td><button class="table-btn small-edit" data-id="${id}" data-action="edit">Edit</button></td>`;
-    usageTbody.appendChild(tr);
-  });
+// usage listener & render
+function renderUsage(){
+  const q = query(usageCol, orderBy("usedAt","desc"));
+  onSnapshot(q, snapshot=>{
+    usageTbody.innerHTML = "";
+    snapshot.forEach(docSnap=>{
+      const d = docSnap.data(); const id = docSnap.id;
+      const date = fmtDate(d.usedAt);
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td style="text-align:left;padding-left:10px">${escapeHtml(d.particular)}</td>
+        <td>${escapeHtml(d.unit)}</td><td>${d.qty}</td><td>${date}</td><td>${escapeHtml(d.remarks || "")}</td>
+        <td><button class="table-btn small-edit" data-id="${id}" data-action="edit">Edit</button></td>`;
+      usageTbody.appendChild(tr);
+    });
 
-  usageTbody.querySelectorAll("button[data-action='edit']").forEach(btn=>{
-    btn.onclick = async () => {
-      const id = btn.dataset.id;
-      try{
-        const snap = await getDoc(doc(db,"usage",id));
-        if(!snap.exists()) return showToast("Record missing");
-        const data = snap.data();
-        editingUsageId = id;
-        editUsageTitle.textContent = "Edit Usage Remarks";
-        usageRequestSelect.value = data.fromRequestId || "";
-        editUsageParticular.value = data.particular || "";
-        editUsageUnit.value = data.unit || "";
-        editUsageQty.value = data.qty || 1;
-        editUsageRemarks.value = data.remarks || "";
-        openModal(editUsageModal);
-      } catch(e){ console.error(e); showToast("⚠️ Fetch failed"); }
-    };
+    usageTbody.querySelectorAll("button[data-action='edit']").forEach(btn=>{
+      btn.onclick = async () => {
+        const id = btn.dataset.id;
+        try{
+          const snap = await getDoc(doc(db,"usage",id));
+          if(!snap.exists()) return showToast("Record missing");
+          const data = snap.data();
+          editingUsageId = id;
+          editUsageTitle.textContent = "Edit Usage Remarks";
+          usageRequestSelect.value = data.fromRequestId || "";
+          editUsageParticular.value = data.particular || "";
+          editUsageUnit.value = data.unit || "";
+          editUsageQty.value = data.qty || 1;
+          editUsageRemarks.value = data.remarks || "";
+          openModal(editUsageModal);
+        } catch(e){ console.error(e); showAlertError("Fetch failed", e.message || ""); }
+      };
+    });
   });
-});
+}
 
 // decrement usage remaining only (and mark usageFulfilled if <=0)
 async function decrementUsageRemaining(requestId, delta){
@@ -459,7 +502,7 @@ async function decrementUsageRemaining(requestId, delta){
     if(!snap.exists()) return;
     const data = snap.data();
     const cur = Number(data.remainingForUsage ?? data.qty ?? 0);
-    const newRem = Math.max(cur - Number(delta || 0), 0);
+    const newRem = cur - Number(delta || 0);
     if(newRem <= 0){
       await updateDoc(reqRef, { remainingForUsage: 0, usageFulfilled: true, updatedAt: serverTimestamp() });
       showToast("✅ Request fulfilled for Usage (removed from Usage select)");
@@ -471,11 +514,11 @@ async function decrementUsageRemaining(requestId, delta){
 }
 
 // ---------- Remaining: compute and show ----------
-viewRemainingBtn.addEventListener("click", ()=> { computeAndRenderRemaining(); openModal(remainingModal); });
-closeRemainingBtn.addEventListener("click", ()=> closeModal(remainingModal));
-closeRemainingBtnTop.addEventListener("click", ()=> closeModal(remainingModal));
-searchRemaining.addEventListener("input", ()=> filterTableRows(remainingTbody, searchRemaining.value));
-printRemainingBtn.addEventListener("click", ()=> printTable("Remaining Inventory", document.getElementById("remainingTable")));
+viewRemainingBtn?.addEventListener("click", ()=> { computeAndRenderRemaining(); openModal(remainingModal); });
+closeRemainingBtn?.addEventListener("click", ()=> closeModal(remainingModal));
+closeRemainingBtnTop?.addEventListener("click", ()=> closeModal(remainingModal));
+searchRemaining?.addEventListener("input", ()=> filterTableRows(remainingTbody, searchRemaining.value));
+printRemainingBtn?.addEventListener("click", ()=> printTable("Remaining Inventory", document.getElementById("remainingTable")));
 
 async function computeAndRenderRemaining(){
   const reqSnap = await getDocs(requestsCol);
@@ -515,11 +558,11 @@ async function computeAndRenderRemaining(){
 }
 
 // ---------- History (monthly totals) ----------
-viewHistoryBtn.addEventListener("click", async ()=> { await renderHistory(); openModal(historyModal); });
-closeHistoryBtn.addEventListener("click", ()=> closeModal(historyModal));
-closeHistoryBtnTop.addEventListener("click", ()=> closeModal(historyModal));
-searchHistory.addEventListener("input", ()=> filterTableRows(historyTbody, searchHistory.value));
-printHistoryBtn.addEventListener("click", ()=> printTable("History Usage", document.getElementById("historyTable")));
+viewHistoryBtn?.addEventListener("click", async ()=> { await renderHistory(); openModal(historyModal); });
+closeHistoryBtn?.addEventListener("click", ()=> closeModal(historyModal));
+closeHistoryBtnTop?.addEventListener("click", ()=> closeModal(historyModal));
+searchHistory?.addEventListener("input", ()=> filterTableRows(historyTbody, searchHistory.value));
+printHistoryBtn?.addEventListener("click", ()=> printTable("History Usage", document.getElementById("historyTable")));
 
 async function renderHistory(){
   const snaps = await getDocs(usageCol);
@@ -566,6 +609,7 @@ function fillDeliveredSelect(requests){
   deliveredRequestSelect.onchange = () => {
     const rid = deliveredRequestSelect.value;
     const sel = latestRequestsArray.find(x=> x.id === rid);
+    // clear personnel selection
     personnelEl.value = "";
     if(sel){ editDeliveredParticular.value = sel.particular; editDeliveredUnit.value = sel.unit; editDeliveredQty.value = sel.remainingForDelivered || sel.qty; }
     else { editDeliveredParticular.value=""; editDeliveredUnit.value=""; editDeliveredQty.value=1; }
@@ -713,9 +757,9 @@ function printTable(title, tableEl){
 }
 
 // ---------- Utility: search input hookup for delivered/usage/request tables ----------
-searchDelivered.addEventListener("input", ()=> filterTableRows(deliveredTbody, searchDelivered.value));
-searchUsage.addEventListener("input", ()=> filterTableRows(usageTbody, searchUsage.value));
-searchRequests.addEventListener("input", ()=> filterTableRows(requestsTbody, searchRequests.value));
+searchDelivered?.addEventListener("input", ()=> filterTableRows(deliveredTbody, searchDelivered.value));
+searchUsage?.addEventListener("input", ()=> filterTableRows(usageTbody, searchUsage.value));
+searchRequests?.addEventListener("input", ()=> filterTableRows(requestsTbody, searchRequests.value));
 
 // ---------- Boot note: ensure selects update when requests change ----------
 onSnapshot(requestsQ, snapshot=>{
